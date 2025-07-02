@@ -1,38 +1,42 @@
-# Dockerfile
-
-# 1. Builder Stage: Build the Next.js application
-FROM node:20-slim AS builder
-
+# === Base: Install Dependencies ===
+# Get base image
+FROM node:20-alpine AS base
+# Set working directory
 WORKDIR /app
-
+# Copy package.json and package-lock.json
+COPY package*.json ./
 # Install dependencies
-COPY package.json package-lock.json* ./
 RUN npm install
 
-# Copy source code
+# === Builder: Build the Application ===
+FROM base AS builder
+# Set working directory
+WORKDIR /app
+# Copy all files
 COPY . .
-
-# Build the app
+# Generate the Next.js build
 RUN npm run build
 
-# 2. Runner Stage: Create the final, minimal image
-FROM node:20-slim AS runner
-
+# === Runner: Production Image ===
+FROM node:20-alpine AS runner
+# Set working directory
 WORKDIR /app
-
 ENV NODE_ENV=production
 
-# Copy the standalone output from the builder stage with correct permissions.
-# The 'standalone' output is a self-contained folder with all necessary files.
-COPY --from=builder --chown=node:node /app/.next/standalone ./
+# Create a non-root user for security
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
 
-# Run the application as a non-root user for security
-USER node
+# Copy the entire standalone application output from the builder stage.
+# The trailing dot on the source path is crucial to copy the contents.
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone/. ./
 
+# Set the user to the non-root user
+USER nextjs
+
+# Expose the port the app runs on
 EXPOSE 3000
+ENV PORT=3000
 
-# The port can be set via environment variable, defaulting to 3000
-ENV PORT 3000
-
-# Start the server
+# Start the app
 CMD ["node", "server.js"]

@@ -2,9 +2,20 @@ version: '3.8'
 
 services:
   app:
-    build:
-      context: .
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
+    # TODO: 'your-github-username/your-repo-name' をあなたの実際の値に置き換えてください
+    image: ghcr.io/your-github-username/your-repo-name:main
+    container_name: audiorando
+    restart: always
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.audiorando.rule=Host(`noise.centraworks.net`)"
+      - "traefik.http.routers.audiorando.entrypoints=websecure"
+      - "traefik.http.routers.audiorando.tls.certresolver=myresolver" # Traefikで設定した証明書リゾルバ名に置き換えてください
+      - "traefik.http.services.audiorando.loadbalancer.server.port=3000"
+      - "traefik.docker.network=web"
+
+networks:
+  web:
+    external: true # Traefikが利用している外部ネットワーク名を指定してください

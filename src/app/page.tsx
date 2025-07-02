@@ -12,8 +12,8 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Mic, MicOff, RefreshCw, AlertCircle, TrendingUp, Copy, KeyRound, Hash } from 'lucide-react';
 
-const MAX_ENTROPY_POOL_SIZE = 4096;
-const QUALITY_THRESHOLD = 5.0;
+const MAX_ENTROPY_POOL_SIZE = 262144; // 4096 * 64
+const QUALITY_THRESHOLD = 10.0;
 
 const calculateStandardDeviation = (array: Uint8Array): number => {
   if (array.length === 0) return 0;
@@ -187,7 +187,7 @@ export default function Home() {
             <div className="relative mb-6 bg-muted rounded-lg p-4 group min-h-[100px] flex items-center justify-center">
               <pre
                 key={animationKey} 
-                className="text-xl font-mono text-primary break-all animate-pop-in text-center select-all"
+                className="text-xl font-mono text-primary break-all whitespace-pre-wrap animate-pop-in text-center select-all"
                 style={{fontFeatureSettings: '"tnum"'}}
               >
                 {generatedOutput}

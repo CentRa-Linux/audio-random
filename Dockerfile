@@ -30,6 +30,7 @@ RUN adduser --system --uid 1001 nextjs
 # Copy the entire standalone application output from the builder stage.
 # The trailing dot on the source path is crucial to copy the contents.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone/. ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static/. ./.next/static/
 
 # Set the user to the non-root user
 USER nextjs

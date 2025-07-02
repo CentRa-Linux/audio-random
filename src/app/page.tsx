@@ -12,8 +12,8 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Mic, MicOff, RefreshCw, AlertCircle, TrendingUp, Copy, KeyRound, Hash } from 'lucide-react';
 
-const MAX_ENTROPY_POOL_SIZE = 262144; // 4096 * 64
-const QUALITY_THRESHOLD = 10.0;
+const MAX_ENTROPY_POOL_SIZE = 262144;
+const QUALITY_THRESHOLD = 25.0; // Increased threshold for higher quality entropy
 
 const calculateStandardDeviation = (array: Uint8Array): number => {
   if (array.length === 0) return 0;
@@ -33,6 +33,7 @@ export default function Home() {
   const [outputType, setOutputType] = useState('password');
   const [outputSize, setOutputSize] = useState(16);
   const [generatedOutput, setGeneratedOutput] = useState<string>('---');
+  const [isGenerating, setIsGenerating] = useState(false);
   const { toast } = useToast();
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -68,11 +69,26 @@ export default function Home() {
 
       if (quality > QUALITY_THRESHOLD) {
         if (entropyPoolRef.current.length < MAX_ENTROPY_POOL_SIZE) {
-          entropyPoolRef.current.push(...Array.from(dataArray));
-          if (entropyPoolRef.current.length > MAX_ENTROPY_POOL_SIZE) {
-             entropyPoolRef.current.splice(MAX_ENTROPY_POOL_SIZE);
+          const whitenedBytes = [];
+          for (let i = 0; i < dataArray.length; i += 2) {
+            // Ensure we have a pair
+            if (i + 1 < dataArray.length) {
+                const byte1 = dataArray[i];
+                const byte2 = dataArray[i + 1];
+                // Von Neumann-like whitening at the byte level. Discard if bytes are same or zero.
+                if (byte1 !== byte2 && byte1 !== 0) {
+                    whitenedBytes.push(byte1);
+                }
+            }
           }
-          setEntropyLevel(entropyPoolRef.current.length);
+
+          if (whitenedBytes.length > 0) {
+            entropyPoolRef.current.push(...whitenedBytes);
+            if (entropyPoolRef.current.length > MAX_ENTROPY_POOL_SIZE) {
+               entropyPoolRef.current.splice(MAX_ENTROPY_POOL_SIZE);
+            }
+            setEntropyLevel(entropyPoolRef.current.length);
+          }
         }
       }
     }
@@ -117,37 +133,64 @@ export default function Home() {
     };
   }, [startCapture, stopCapture]);
 
-  const handleGenerate = () => {
-    if (entropyPoolRef.current.length < outputSize) {
-      setError(`Not enough entropy. Need ${outputSize} bytes, have ${entropyLevel}.`);
+  const handleGenerate = async () => {
+    const requiredEntropy = Math.max(256, outputSize * 4);
+    if (entropyPoolRef.current.length < requiredEntropy) {
+      setError(`Not enough entropy. Need ${requiredEntropy} bytes, have ${entropyLevel}. Make some noise!`);
       return;
     }
     setError(null);
+    setIsGenerating(true);
 
-    const randomBytes = entropyPoolRef.current.splice(0, outputSize);
-    setEntropyLevel(entropyPoolRef.current.length);
+    try {
+      // Take a chunk from the pool. This is our source material.
+      const entropyChunk = entropyPoolRef.current.splice(0, requiredEntropy);
+      setEntropyLevel(entropyPoolRef.current.length);
 
-    let result: string;
-    switch(outputType) {
-      case 'password':
-        const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:',.<>?/";
-        result = Array.from({ length: outputSize }, (_, i) => charset[randomBytes[i] % charset.length]).join('');
-        break;
-      case 'hex':
-        result = randomBytes.map(byte => byte.toString(16).padStart(2, '0')).join('');
-        break;
-      case 'number':
-      default:
-        let bigIntValue = 0n;
-        for (let i = 0; i < randomBytes.length; i++) {
-          bigIntValue = (bigIntValue << 8n) + BigInt(randomBytes[i]);
-        }
-        result = bigIntValue.toString();
-        break;
+      // Use a cryptographic hash (SHA-256) to extract high-quality randomness.
+      // We repeatedly hash the chunk with a counter to generate enough bytes.
+      const finalBytes: number[] = [];
+      let counter = 0;
+      const encoder = new TextEncoder();
+
+      while (finalBytes.length < outputSize) {
+        const counterBytes = encoder.encode(counter.toString());
+        const dataToHash = new Uint8Array([...entropyChunk, ...counterBytes]);
+        const hashBuffer = await window.crypto.subtle.digest('SHA-256', dataToHash);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        finalBytes.push(...hashArray);
+        counter++;
+      }
+      
+      const randomBytes = finalBytes.slice(0, outputSize);
+
+      let result: string;
+      switch(outputType) {
+        case 'password':
+          const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:',.<>?/";
+          result = Array.from({ length: outputSize }, (_, i) => charset[randomBytes[i] % charset.length]).join('');
+          break;
+        case 'hex':
+          result = randomBytes.map(byte => byte.toString(16).padStart(2, '0')).join('');
+          break;
+        case 'number':
+        default:
+          let bigIntValue = 0n;
+          for (let i = 0; i < randomBytes.length; i++) {
+            bigIntValue = (bigIntValue << 8n) + BigInt(randomBytes[i]);
+          }
+          result = bigIntValue.toString();
+          break;
+      }
+      
+      setGeneratedOutput(result);
+      setAnimationKey(prev => prev + 1);
+    } catch (e) {
+      console.error("Error during generation:", e);
+      setError("Failed to generate random data due to an unexpected error.");
+    } finally {
+      setIsGenerating(false);
     }
-    
-    setGeneratedOutput(result);
-    setAnimationKey(prev => prev + 1);
   };
   
   const copyToClipboard = () => {
@@ -174,6 +217,7 @@ export default function Home() {
   }[outputType];
 
   const displayLength = outputType === 'hex' ? outputSize * 2 : outputSize;
+  const requiredEntropy = Math.max(256, outputSize * 4);
 
   return (
     <main className="flex min-h-screen w-full flex-col items-center justify-center p-4 bg-background">
@@ -258,12 +302,14 @@ export default function Home() {
           )}
         </CardContent>
         <CardFooter>
-          <Button onClick={handleGenerate} size="lg" className="w-full text-lg py-6" disabled={!isReady || entropyLevel < outputSize}>
-            <RefreshCw className="mr-2 h-5 w-5" />
-            Generate
+          <Button onClick={handleGenerate} size="lg" className="w-full text-lg py-6" disabled={!isReady || entropyLevel < requiredEntropy || isGenerating}>
+            <RefreshCw className={`mr-2 h-5 w-5 ${isGenerating ? 'animate-spin' : ''}`} />
+            {isGenerating ? 'Generating...' : 'Generate'}
           </Button>
         </CardFooter>
       </Card>
     </main>
   );
 }
+
+    

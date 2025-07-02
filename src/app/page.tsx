@@ -5,13 +5,27 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Mic, MicOff, RefreshCw, AlertCircle } from 'lucide-react';
+import { Progress } from "@/components/ui/progress";
+import { Mic, MicOff, RefreshCw, AlertCircle, TrendingUp } from 'lucide-react';
+
+const MAX_ENTROPY_POOL_SIZE = 4096;
+const QUALITY_THRESHOLD = 5.0;
+
+const calculateStandardDeviation = (array: Uint8Array): number => {
+  if (array.length === 0) return 0;
+  const n = array.length;
+  const mean = array.reduce((a, b) => a + b) / n;
+  const variance = array.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
+  return Math.sqrt(variance);
+};
 
 export default function Home() {
   const [isReady, setIsReady] = useState(false);
   const [randomNumber, setRandomNumber] = useState(0);
   const [animationKey, setAnimationKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [entropyLevel, setEntropyLevel] = useState(0);
+  const [audioQuality, setAudioQuality] = useState(0);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -40,11 +54,18 @@ export default function Home() {
     if (analyserRef.current) {
       const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
       analyserRef.current.getByteFrequencyData(dataArray);
-      entropyPoolRef.current.push(...Array.from(dataArray));
 
-      const maxPoolSize = 4096;
-      if (entropyPoolRef.current.length > maxPoolSize) {
-        entropyPoolRef.current.splice(0, entropyPoolRef.current.length - maxPoolSize);
+      const quality = calculateStandardDeviation(dataArray);
+      setAudioQuality(quality);
+
+      if (quality > QUALITY_THRESHOLD) {
+        if (entropyPoolRef.current.length < MAX_ENTROPY_POOL_SIZE) {
+          entropyPoolRef.current.push(...Array.from(dataArray));
+          if (entropyPoolRef.current.length > MAX_ENTROPY_POOL_SIZE) {
+             entropyPoolRef.current.splice(MAX_ENTROPY_POOL_SIZE);
+          }
+          setEntropyLevel(entropyPoolRef.current.length);
+        }
       }
     }
     animationFrameIdRef.current = requestAnimationFrame(gatherEntropy);
@@ -89,8 +110,8 @@ export default function Home() {
   }, [startCapture, stopCapture]);
 
   const handleGenerateNumber = () => {
-    if (!analyserRef.current || entropyPoolRef.current.length < analyserRef.current.frequencyBinCount) {
-      setError("Not enough entropy has been gathered. Please wait a moment and try again.");
+    if (entropyPoolRef.current.length < 1024) {
+      setError(`Not enough entropy gathered. Need at least 1024 bytes. Current pool size: ${entropyLevel}/${MAX_ENTROPY_POOL_SIZE} bytes.`);
       return;
     }
     setError(null);
@@ -106,7 +127,9 @@ export default function Home() {
 
     setRandomNumber(newRandomNumber);
     setAnimationKey(prev => prev + 1);
+    
     entropyPoolRef.current = [];
+    setEntropyLevel(0);
   };
 
   return (
@@ -116,7 +139,7 @@ export default function Home() {
           <CardTitle className="text-3xl font-bold">AudioRando</CardTitle>
           <CardDescription>Generate truly random numbers from ambient noise.</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col items-center justify-center space-y-8 py-10">
+        <CardContent className="flex flex-col items-center justify-center space-y-6 py-10">
           <div 
             key={animationKey} 
             className="text-8xl font-bold font-mono text-primary animate-pop-in text-center"
@@ -124,12 +147,30 @@ export default function Home() {
           >
             {String(randomNumber).padStart(4, '0')}
           </div>
-          <div className="flex items-center justify-center space-x-2 text-muted-foreground">
-            {isReady ? <Mic className="w-5 h-5 text-primary" /> : <MicOff className="w-5 h-5" />}
-            <span>{isReady ? "Status: Gathering entropy..." : "Status: Awaiting microphone permission..."}</span>
+          
+          <div className="w-full space-y-4 px-4">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Entropy Pool</span>
+                  <span>{entropyLevel} / {MAX_ENTROPY_POOL_SIZE} bytes</span>
+              </div>
+              <Progress value={(entropyLevel / MAX_ENTROPY_POOL_SIZE) * 100} className="w-full h-3" />
+            </div>
+
+            <div className="flex items-center justify-center space-x-4 text-muted-foreground text-sm">
+              <div className="flex items-center space-x-2">
+                {isReady ? <Mic className="w-4 h-4 text-primary" /> : <MicOff className="w-4 h-4" />}
+                <span>{isReady ? "Gathering..." : "Awaiting mic..."}</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <TrendingUp className="w-4 h-4" />
+                <span>Quality: {audioQuality.toFixed(2)}</span>
+              </div>
+            </div>
           </div>
+
           {error && (
-            <Alert variant="destructive" className="w-full">
+            <Alert variant="destructive" className="w-full mt-4">
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Error</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
@@ -137,7 +178,7 @@ export default function Home() {
           )}
         </CardContent>
         <CardFooter>
-          <Button onClick={handleGenerateNumber} size="lg" className="w-full text-lg py-6" disabled={!isReady}>
+          <Button onClick={handleGenerateNumber} size="lg" className="w-full text-lg py-6" disabled={!isReady || entropyLevel < 1024}>
             <RefreshCw className="mr-2 h-5 w-5" />
             Generate Number
           </Button>

@@ -223,7 +223,7 @@ export default function Home() {
     <main className="flex min-h-screen w-full flex-col items-center justify-center p-4 bg-background">
       <Card className="w-full max-w-md shadow-2xl">
         <CardHeader className="text-center">
-          <CardTitle className="text-3xl font-bold">AudioRando</CardTitle>
+          <CardTitle className="text-3xl font-bold">WORDの騒音で乱数作るくん</CardTitle>
           <CardDescription>Generate truly random numbers, passwords, and more from ambient noise.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col items-center justify-center space-y-6">

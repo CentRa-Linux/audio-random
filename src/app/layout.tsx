@@ -3,7 +3,7 @@ import './globals.css';
 import { Toaster } from "@/components/ui/toaster"
 
 export const metadata: Metadata = {
-  title: 'AudioRando',
+  title: 'WORDの騒音で乱数作るくん',
   description: 'Generate random numbers from your microphone',
 };
 

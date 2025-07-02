@@ -131,7 +131,7 @@ export default function Home() {
     switch(outputType) {
       case 'password':
         const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:',.<>?/";
-        result = randomBytes.map(byte => charset[byte % charset.length]).join('');
+        result = Array.from({ length: outputSize }, (_, i) => charset[randomBytes[i] % charset.length]).join('');
         break;
       case 'hex':
         result = randomBytes.map(byte => byte.toString(16).padStart(2, '0')).join('');
@@ -166,6 +166,14 @@ export default function Home() {
         console.error('Could not copy text: ', err);
     });
   };
+
+  const lengthLabel = {
+    password: '文字数',
+    hex: '桁数',
+    number: 'バイト数'
+  }[outputType];
+
+  const displayLength = outputType === 'hex' ? outputSize * 2 : outputSize;
 
   return (
     <main className="flex min-h-screen w-full flex-col items-center justify-center p-4 bg-background">
@@ -207,8 +215,8 @@ export default function Home() {
               
               <div className="space-y-2">
                  <div className="flex justify-between items-center text-sm">
-                      <Label htmlFor="bytes-slider">Length (bytes)</Label>
-                      <span className="font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-md">{outputSize}</span>
+                      <Label htmlFor="bytes-slider">{lengthLabel}</Label>
+                      <span className="font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-md">{displayLength}</span>
                   </div>
                   <Slider
                       id="bytes-slider"

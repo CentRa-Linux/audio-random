@@ -9,11 +9,12 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Mic, MicOff, RefreshCw, AlertCircle, TrendingUp, Copy, KeyRound, Hash } from 'lucide-react';
+import { Mic, MicOff, RefreshCw, AlertCircle, TrendingUp, Copy, KeyRound, Hash, Dices } from 'lucide-react';
 
 const MAX_ENTROPY_POOL_SIZE = 262144;
-const QUALITY_THRESHOLD = 25.0; // Increased threshold for higher quality entropy
+const QUALITY_THRESHOLD = 25.0;
 
 const calculateStandardDeviation = (array: Uint8Array): number => {
   if (array.length === 0) return 0;
@@ -35,6 +36,11 @@ export default function Home() {
   const [generatedOutput, setGeneratedOutput] = useState<string>('---');
   const [isGenerating, setIsGenerating] = useState(false);
   const { toast } = useToast();
+
+  // State for Number generation
+  const [numRolls, setNumRolls] = useState(1);
+  const [minPerRoll, setMinPerRoll] = useState(1);
+  const [maxPerRoll, setMaxPerRoll] = useState(6);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -71,11 +77,9 @@ export default function Home() {
         if (entropyPoolRef.current.length < MAX_ENTROPY_POOL_SIZE) {
           const whitenedBytes = [];
           for (let i = 0; i < dataArray.length; i += 2) {
-            // Ensure we have a pair
             if (i + 1 < dataArray.length) {
                 const byte1 = dataArray[i];
                 const byte2 = dataArray[i + 1];
-                // Von Neumann-like whitening at the byte level. Discard if bytes are same or zero.
                 if (byte1 !== byte2 && byte1 !== 0) {
                     whitenedBytes.push(byte1);
                 }
@@ -132,9 +136,22 @@ export default function Home() {
       stopCapture();
     };
   }, [startCapture, stopCapture]);
+  
+  const handleTemplateClick = (template: string) => {
+    const [countStr, sidesStr] = template.split('d');
+    const count = parseInt(countStr, 10);
+    const sides = parseInt(sidesStr, 10);
+    
+    setNumRolls(count);
+    setMinPerRoll(1);
+    setMaxPerRoll(sides);
+  };
 
   const handleGenerate = async () => {
-    const requiredEntropy = Math.max(256, outputSize * 4);
+    const requiredEntropy = outputType === 'number' 
+      ? numRolls * 8 // 8 bytes (64 bits) per roll should be sufficient
+      : Math.max(256, outputSize * 4);
+    
     if (entropyPoolRef.current.length < requiredEntropy) {
       setError(`Not enough entropy. Need ${requiredEntropy} bytes, have ${entropyLevel}. Make some noise!`);
       return;
@@ -143,44 +160,69 @@ export default function Home() {
     setIsGenerating(true);
 
     try {
-      // Take a chunk from the pool. This is our source material.
-      const entropyChunk = entropyPoolRef.current.splice(0, requiredEntropy);
-      setEntropyLevel(entropyPoolRef.current.length);
-
-      // Use a cryptographic hash (SHA-256) to extract high-quality randomness.
-      // We repeatedly hash the chunk with a counter to generate enough bytes.
-      const finalBytes: number[] = [];
-      let counter = 0;
-      const encoder = new TextEncoder();
-
-      while (finalBytes.length < outputSize) {
-        const counterBytes = encoder.encode(counter.toString());
-        const dataToHash = new Uint8Array([...entropyChunk, ...counterBytes]);
-        const hashBuffer = await window.crypto.subtle.digest('SHA-256', dataToHash);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        finalBytes.push(...hashArray);
-        counter++;
-      }
-      
-      const randomBytes = finalBytes.slice(0, outputSize);
-
       let result: string;
-      switch(outputType) {
-        case 'password':
-          const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:',.<>?/";
-          result = Array.from({ length: outputSize }, (_, i) => charset[randomBytes[i] % charset.length]).join('');
-          break;
-        case 'hex':
-          result = randomBytes.map(byte => byte.toString(16).padStart(2, '0')).join('');
-          break;
-        case 'number':
-        default:
-          let bigIntValue = 0n;
-          for (let i = 0; i < randomBytes.length; i++) {
-            bigIntValue = (bigIntValue << 8n) + BigInt(randomBytes[i]);
-          }
-          result = bigIntValue.toString();
-          break;
+      
+      // Use a different logic branch for number generation
+      if (outputType === 'number') {
+        if (minPerRoll >= maxPerRoll) {
+            setError("Min value must be less than max value.");
+            setIsGenerating(false);
+            return;
+        }
+
+        const rolls: bigint[] = [];
+        let total = 0n;
+        const range = BigInt(maxPerRoll) - BigInt(minPerRoll) + 1n;
+
+        for (let i = 0; i < numRolls; i++) {
+            // Take 8 bytes for each roll for high precision
+            const entropyChunk = entropyPoolRef.current.splice(0, 8);
+            
+            let randomBigInt = 0n;
+            for (const byte of entropyChunk) {
+              randomBigInt = (randomBigInt << 8n) + BigInt(byte);
+            }
+            
+            const roll = BigInt(minPerRoll) + (randomBigInt % range);
+            rolls.push(roll);
+            total += roll;
+        }
+        
+        result = numRolls > 1 ? `${total} (${rolls.join(', ')})` : total.toString();
+        setEntropyLevel(entropyPoolRef.current.length);
+
+      } else {
+        // Existing logic for password and hex
+        const entropyChunk = entropyPoolRef.current.splice(0, requiredEntropy);
+        setEntropyLevel(entropyPoolRef.current.length);
+
+        const finalBytes: number[] = [];
+        let counter = 0;
+        const encoder = new TextEncoder();
+
+        while (finalBytes.length < outputSize) {
+          const counterBytes = encoder.encode(counter.toString());
+          const dataToHash = new Uint8Array([...entropyChunk, ...counterBytes]);
+          const hashBuffer = await window.crypto.subtle.digest('SHA-256', dataToHash);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          finalBytes.push(...hashArray);
+          counter++;
+        }
+        
+        const randomBytes = finalBytes.slice(0, outputSize);
+
+        switch(outputType) {
+          case 'password':
+            const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:',.<>?/";
+            result = Array.from({ length: outputSize }, (_, i) => charset[randomBytes[i] % charset.length]).join('');
+            break;
+          case 'hex':
+            result = randomBytes.map(byte => byte.toString(16).padStart(2, '0')).join('');
+            break;
+          default:
+            result = '---'; // Should not happen
+            break;
+        }
       }
       
       setGeneratedOutput(result);
@@ -210,14 +252,27 @@ export default function Home() {
     });
   };
 
-  const lengthLabel = {
-    password: '文字数',
-    hex: '桁数',
-    number: 'バイト数'
-  }[outputType];
+  const getLengthLabel = () => {
+    switch(outputType) {
+      case 'password': return '文字数';
+      case 'hex': return '桁数';
+      default: return '';
+    }
+  }
 
-  const displayLength = outputType === 'hex' ? outputSize * 2 : outputSize;
-  const requiredEntropy = Math.max(256, outputSize * 4);
+  const getDisplayLength = () => {
+     switch(outputType) {
+      case 'hex': return outputSize * 2;
+      case 'password': return outputSize;
+      default: return 0;
+    }
+  }
+  
+  const requiredEntropy = outputType === 'number' 
+      ? numRolls * 8
+      : Math.max(256, outputSize * 4);
+      
+  const diceTemplates = ['1d3', '1d6', '1d10', '1d20', '1d100', '2d6', '3d6'];
 
   return (
     <main className="flex min-h-screen w-full flex-col items-center justify-center p-4 bg-background">
@@ -251,26 +306,56 @@ export default function Home() {
             <div className="w-full space-y-6">
               <Tabs value={outputType} onValueChange={setOutputType} className="w-full">
                 <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="number"><TrendingUp className="mr-2 h-4 w-4"/>Number</TabsTrigger>
+                  <TabsTrigger value="number"><Dices className="mr-2 h-4 w-4"/>Number</TabsTrigger>
                   <TabsTrigger value="password"><KeyRound className="mr-2 h-4 w-4"/>Password</TabsTrigger>
                   <TabsTrigger value="hex"><Hash className="mr-2 h-4 w-4"/>Hex</TabsTrigger>
                 </TabsList>
               </Tabs>
               
-              <div className="space-y-2">
-                 <div className="flex justify-between items-center text-sm">
-                      <Label htmlFor="bytes-slider">{lengthLabel}</Label>
-                      <span className="font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-md">{displayLength}</span>
-                  </div>
-                  <Slider
-                      id="bytes-slider"
-                      value={[outputSize]}
-                      onValueChange={(v) => setOutputSize(v[0])}
-                      min={4}
-                      max={128}
-                      step={4}
-                  />
-              </div>
+              {outputType === 'number' ? (
+                <div className="space-y-4">
+                   <div className="grid grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="num-rolls">Rolls</Label>
+                            <Input id="num-rolls" type="number" value={numRolls} onChange={e => setNumRolls(Math.max(1, parseInt(e.target.value) || 1))} min="1"/>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="min-roll">Min</Label>
+                            <Input id="min-roll" type="number" value={minPerRoll} onChange={e => setMinPerRoll(parseInt(e.target.value) || 0)} />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="max-roll">Max</Label>
+                            <Input id="max-roll" type="number" value={maxPerRoll} onChange={e => setMaxPerRoll(parseInt(e.target.value) || 0)} />
+                        </div>
+                   </div>
+                   <div className="space-y-2">
+                      <Label>Dice Templates</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {diceTemplates.map(template => (
+                          <Button key={template} variant="outline" size="sm" onClick={() => handleTemplateClick(template)}>
+                            {template}
+                          </Button>
+                        ))}
+                      </div>
+                   </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                   <div className="flex justify-between items-center text-sm">
+                        <Label htmlFor="bytes-slider">{getLengthLabel()}</Label>
+                        <span className="font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-md">{getDisplayLength()}</span>
+                    </div>
+                    <Slider
+                        id="bytes-slider"
+                        value={[outputSize]}
+                        onValueChange={(v) => setOutputSize(v[0])}
+                        min={4}
+                        max={128}
+                        step={4}
+                    />
+                </div>
+              )}
+
 
               <div className="space-y-2">
                 <div className="flex justify-between text-sm text-muted-foreground">
@@ -311,5 +396,3 @@ export default function Home() {
     </main>
   );
 }
-
-    
